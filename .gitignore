@@ -1,0 +1,15 @@
+# Real secrets — never commit
+.env
+
+# Generated podman-compose files (created by scripts/podman-prep.sh)
+# These are derived from the standard compose files and should not be committed
+# in the repos they live in (tsm-orchestration/ and water-dp/).
+# The hydro-deploy docker-compose.podman.yml IS committed (hand-maintained).
+../tsm-orchestration/docker-compose.podman.yml
+../water-dp/docker-compose.podman.yml
+../water-dp/docker-compose.tsm.podman.yml
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~

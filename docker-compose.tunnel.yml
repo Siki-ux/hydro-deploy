@@ -1,0 +1,37 @@
+# docker-compose.tunnel.yml
+#
+# Adds a Cloudflare Tunnel (cloudflared) to the stack.
+# This gives secure HTTPS internet access without opening firewall ports.
+#
+# Setup:
+#   1. Go to https://one.dash.cloudflare.com → Networks → Tunnels → Create tunnel
+#   2. Name it (e.g. hydro-platform)
+#   3. Under "Public Hostnames", add:
+#        Subdomain: *         Domain: your-domain.com
+#        Service:   http://proxy:80   (TSM nginx proxy container)
+#      Or add specific subdomains per service:
+#        portal.your-domain.com  → http://proxy:80
+#        api.your-domain.com     → http://water-dp-api:8000
+#   4. Copy the tunnel token and set CLOUDFLARE_TUNNEL_TOKEN in .env
+#
+# Usage:
+#   make up-tunnel          # start everything including the tunnel
+#   make logs-tunnel        # follow cloudflared logs
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: hydro-cloudflared
+    restart: unless-stopped
+    # Quick tunnel (no config needed): generates a random *.trycloudflare.com URL.
+    # Named tunnel (stable domain): set CLOUDFLARE_TUNNEL_TOKEN in .env and change
+    # command to: tunnel --no-autoupdate run
+    command: tunnel --no-autoupdate --url http://proxy:80
+    networks:
+      - water_shared_net
+    depends_on:
+      - proxy
+
+networks:
+  water_shared_net:
+    name: hydro-platform-net

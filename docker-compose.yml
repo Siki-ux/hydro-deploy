@@ -1,0 +1,96 @@
+# hydro-deploy/docker-compose.yml
+#
+# Network bridge layer — merges the two stacks into one Docker network.
+#
+# This file is always the LAST -f argument so its definitions win.
+# The Makefile builds the full command:
+#
+#   docker compose
+#     -f ../tsm-orchestration/docker-compose.yml
+#     -f ../water-dp/docker-compose.yml
+#     -f ../water-dp/docker-compose.tsm.yml
+#     -f docker-compose.yml          ← this file
+#     --env-file .env
+#
+# What this file does:
+#   - Declares water_shared_net and tsm_network as the SAME Docker network
+#     (hydro-platform-net) so containers from both stacks can talk to each
+#     other without the manual `docker network create water_shared_net` step.
+#   - Disables the local water-dp postgres (TSM's database is used instead).
+#   - Sets the correct MINIO_URL so water-dp-api finds MinIO by container name.
+
+networks:
+  # All three names resolve to the same underlying Docker network.
+  # TSM services use the project 'default' network (no explicit network key).
+  # water-dp services join 'water_shared_net' and optionally 'tsm_network'.
+  # Mapping all three to 'hydro-platform-net' ensures every container can
+  # reach every other container regardless of which network name it declares.
+  default:
+    name: hydro-platform-net
+    driver: bridge
+
+  water_shared_net:
+    name: hydro-platform-net
+    driver: bridge
+
+  tsm_network:
+    name: hydro-platform-net
+    driver: bridge
+
+services:
+  # water-dp-geoserver and geoserver-init use their own dedicated postgres (postgres-app).
+  # Restore geoserver-init to point at postgres-app, not TSM's database
+  # (docker-compose.tsm.yml overrides it to 'database'; we revert that here).
+  # test-sftp-server: seed-only — only starts when --profile seed is active.
+  # Docker Compose skips service_healthy deps on profile-inactive services,
+  # so worker-sync-extsftp starts normally without it.
+  test-sftp-server:
+    profiles:
+      - seed
+    # healthcheck is defined upstream (tsm-orchestration); do not redefine here
+    # because podman-compose merges lists additively, duplicating CMD-SHELL entries.
+
+  geoserver-init:
+    environment:
+      - DB_HOST=postgres-app
+      - DB_NAME=${POSTGRES_DB:-water_app}
+      - DB_USER=${DATABASE_USER:-postgres}
+      - DB_PASSWORD=${DATABASE_PASSWORD:-postgres}
+
+  # Ensure water-dp-api uses the correct MinIO and database URLs.
+  # (docker-compose.tsm.yml already sets these but we make them explicit here
+  #  so they are set even if someone runs without docker-compose.tsm.yml.)
+  api:
+    environment:
+      - MINIO_URL=object-storage:9000
+      - MINIO_ACCESS_KEY=${OBJECT_STORAGE_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${OBJECT_STORAGE_ROOT_PASSWORD:-changeme}
+      - MINIO_SECURE=false
+      - DATABASE_URL=${DATABASE_URL}
+      - TIMEIO_DB_HOST=database
+      - TIMEIO_DB_PORT=5432
+      - TIMEIO_DB_NAME=${TIMEIO_DB_NAME:-postgres}
+      - TIMEIO_DB_USER=${TIMEIO_DB_USER:-postgres}
+      - TIMEIO_DB_PASSWORD=${TIMEIO_DB_PASSWORD:-changeme}
+      # MQTT: water-dp connects as frontendbus (THING_MANAGEMENT_MQTT_* in TSM)
+      - MQTT_BROKER_HOST=mqtt-broker
+      - MQTT_USERNAME=${THING_MANAGEMENT_MQTT_USER:-frontendbus}
+      - MQTT_PASSWORD=${THING_MANAGEMENT_MQTT_PASS:-changeme}
+      # Keycloak: water-dp uses KEYCLOAK_ADMIN_USERNAME/PASSWORD (TSM uses _USER/_PASS)
+      - KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USER:-keycloak}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASS:-changeme}
+
+  worker:
+    environment:
+      - MINIO_URL=object-storage:9000
+      - MINIO_ACCESS_KEY=${OBJECT_STORAGE_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${OBJECT_STORAGE_ROOT_PASSWORD:-changeme}
+      - MINIO_SECURE=false
+      - DATABASE_URL=${DATABASE_URL}
+      - TIMEIO_DB_HOST=database
+      - TIMEIO_DB_PORT=5432
+      - TIMEIO_DB_NAME=${TIMEIO_DB_NAME:-postgres}
+      # MQTT: worker also connects as frontendbus
+      - MQTT_BROKER_HOST=mqtt-broker
+      - MQTT_USERNAME=${THING_MANAGEMENT_MQTT_USER:-frontendbus}
+      - MQTT_PASSWORD=${THING_MANAGEMENT_MQTT_PASS:-changeme}

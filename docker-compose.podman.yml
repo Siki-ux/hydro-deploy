@@ -1,0 +1,112 @@
+networks:
+  default:
+    name: hydro-platform-net
+    driver: bridge
+  water_shared_net:
+    name: hydro-platform-net
+    driver: bridge
+  tsm_network:
+    name: hydro-platform-net
+    driver: bridge
+services:
+  # ── Startup ordering ───────────────────────────────────────────────────────
+  # podman-compose does not auto-start containers when service_healthy conditions
+  # become satisfied later. scripts/start-podman.sh polls health and calls
+  # `podman start` for each stage. The depends_on here put water-dp containers
+  # into "Created" state so they don't race-start before TSM is ready.
+
+  postgres-app:
+    # Start only after proxy (= TSM fully up and routable) is healthy.
+    depends_on:
+      proxy:
+        condition: service_healthy
+
+  water-dp-geoserver:
+    # Start only after its dedicated DB is ready.
+    # kartoza/geoserver entrypoint runs groupadd/useradd and needs root.
+    # --userns=keep-id (rootless podman default) makes the container start as
+    # the host UID which breaks the entrypoint. Pass explicit UID/GID instead.
+    depends_on:
+      postgres-app:
+        condition: service_healthy
+    environment:
+      GEOSERVER_UID: '1000'
+      GEOSERVER_GID: '10001'
+
+  api:
+    # Start only after GeoServer is healthy (geoserver-init needs both).
+    depends_on:
+      water-dp-geoserver:
+        condition: service_healthy
+    environment:
+      MINIO_URL: object-storage:9000
+      MINIO_ACCESS_KEY: ${OBJECT_STORAGE_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${OBJECT_STORAGE_ROOT_PASSWORD:-changeme}
+      MINIO_SECURE: 'false'
+      DATABASE_URL: ${DATABASE_URL}
+      TIMEIO_DB_HOST: database
+      TIMEIO_DB_PORT: '5432'
+      TIMEIO_DB_NAME: ${TIMEIO_DB_NAME:-postgres}
+      TIMEIO_DB_USER: ${TIMEIO_DB_USER:-postgres}
+      TIMEIO_DB_PASSWORD: ${TIMEIO_DB_PASSWORD:-changeme}
+      MQTT_BROKER_HOST: mqtt-broker
+      MQTT_USERNAME: ${THING_MANAGEMENT_MQTT_USER:-frontendbus}
+      MQTT_PASSWORD: ${THING_MANAGEMENT_MQTT_PASS:-changeme}
+      KEYCLOAK_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-keycloak}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASS:-changeme}
+
+  worker:
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      MINIO_URL: object-storage:9000
+      MINIO_ACCESS_KEY: ${OBJECT_STORAGE_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${OBJECT_STORAGE_ROOT_PASSWORD:-changeme}
+      MINIO_SECURE: 'false'
+      DATABASE_URL: ${DATABASE_URL}
+      TIMEIO_DB_HOST: database
+      TIMEIO_DB_PORT: '5432'
+      TIMEIO_DB_NAME: ${TIMEIO_DB_NAME:-postgres}
+      MQTT_BROKER_HOST: mqtt-broker
+      MQTT_USERNAME: ${THING_MANAGEMENT_MQTT_USER:-frontendbus}
+      MQTT_PASSWORD: ${THING_MANAGEMENT_MQTT_PASS:-changeme}
+
+  frontend:
+    depends_on:
+      api:
+        condition: service_started
+
+  # test-sftp-server is a seed-only service: only starts via `make seed --profile seed`.
+  # Removed from the generated TSM podman file (podman_prep.py _ALWAYS_REMOVE) so
+  # worker-sync-extsftp is not blocked on it during normal startup.
+  # Healthcheck uses `-t rsa` to avoid SSH key-negotiation noise in logs.
+  test-sftp-server:
+    image: docker.io/atmoz/sftp:latest
+    command: "testuser:testpass:1001"
+    volumes:
+      - ./test-sftp-data:/home/testuser/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "ssh-keyscan -T 3 -p 22 -t rsa localhost >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    profiles:
+      - seed
+    networks:
+      - default
+
+  # water-dp-geoserver uses its own dedicated postgres (postgres-app).
+  # Restore geoserver-init to postgres-app (docker-compose.tsm.yml overrides to 'database').
+  geoserver-init:
+    depends_on:
+      water-dp-geoserver:
+        condition: service_healthy
+      postgres-app:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres-app
+      DB_NAME: ${POSTGRES_DB:-water_app}
+      DB_USER: ${DATABASE_USER:-postgres}
+      DB_PASSWORD: ${DATABASE_PASSWORD:-postgres}
