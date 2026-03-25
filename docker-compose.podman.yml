@@ -76,6 +76,11 @@ services:
     depends_on:
       api:
         condition: service_started
+    # Explicitly join hydro-platform-net so nginx (proxy) can resolve water-dp-frontend.
+    # Podman-compose does not honour the name: hydro-platform-net alias from network
+    # definitions, so water_shared_net and hydro-platform-net end up as separate networks.
+    networks:
+      - default
 
   # test-sftp-server is a seed-only service: only starts via `make seed --profile seed`.
   # Removed from the generated TSM podman file (podman_prep.py _ALWAYS_REMOVE) so
