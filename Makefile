@@ -80,6 +80,8 @@ help:
 	@echo "  Maintenance:"
 	@echo "    make pull             Pull latest images"
 	@echo "    make build            (Re)build locally compiled images"
+	@echo "    make redeploy-api     Rebuild + recreate api/worker containers"
+	@echo "    make redeploy-frontend Rebuild + recreate frontend container"
 	@echo "    make clean            Stop + delete all volumes (destructive!)"
 	@echo "    make prune            Remove unused images and networks"
 	@echo ""
@@ -213,6 +215,14 @@ build-api:
 .PHONY: build-frontend
 build-frontend:
 	$(_WATER_BUILD_COMPOSE) build frontend
+
+.PHONY: redeploy-api
+redeploy-api: build-api
+	$(COMPOSE) up -d --no-deps api worker
+
+.PHONY: redeploy-frontend
+redeploy-frontend: build-frontend
+	$(COMPOSE) up -d --no-deps frontend
 
 # ─── Maintenance ──────────────────────────────────────────────────────────────
 
