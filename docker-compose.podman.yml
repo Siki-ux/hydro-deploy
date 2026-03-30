@@ -87,7 +87,7 @@ services:
   # worker-sync-extsftp is not blocked on it during normal startup.
   # Healthcheck uses `-t rsa` to avoid SSH key-negotiation noise in logs.
   test-sftp-server:
-    image: docker.io/atmoz/sftp:latest
+    image: docker.io/atmoz/sftp:alpine-3.7
     command: "testuser:testpass:1001"
     volumes:
       - ./test-sftp-data:/home/testuser/data:ro

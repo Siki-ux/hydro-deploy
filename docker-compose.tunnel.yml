@@ -20,7 +20,7 @@
 
 services:
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2024.12.2
     container_name: hydro-cloudflared
     restart: unless-stopped
     # Quick tunnel (no config needed): generates a random *.trycloudflare.com URL.
