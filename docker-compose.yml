@@ -79,6 +79,7 @@ services:
       # Keycloak: water-dp uses KEYCLOAK_ADMIN_USERNAME/PASSWORD (TSM uses _USER/_PASS)
       - KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USER:-keycloak}
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASS:-changeme}
+      - MAX_SENSORS_PER_PROJECT=${MAX_SENSORS_PER_PROJECT:-10000}
 
   worker:
     environment:
