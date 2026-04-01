@@ -42,7 +42,18 @@ check_prereqs() {
     fi
 
     command -v git >/dev/null 2>&1 || die "git not found."
-    command -v python3 >/dev/null 2>&1 || die "python3 not found."
+
+    # Detect Python: prefer python3, fall back to python (Windows).
+    # On Windows the Microsoft Store stub `python3.exe` exists on PATH but
+    # fails with "Python was not found", so verify the command actually works.
+    if python3 --version >/dev/null 2>&1; then
+        PYTHON=python3
+    elif python --version >/dev/null 2>&1; then
+        PYTHON=python
+    else
+        die "python3 (or python) not found."
+    fi
+    ok "Python: $($PYTHON --version)"
 }
 
 # ─── Clone repos ─────────────────────────────────────────────────────────────
@@ -100,7 +111,7 @@ create_symlinks() {
 
         # Compute relative path from the repo dir to the deploy dir .env
         # (works on Linux; macOS users may need coreutils realpath)
-        REL_TARGET="$(python3 -c "import os; print(os.path.relpath('$TARGET', '$REPO_DIR'))")"
+        REL_TARGET="$($PYTHON -c "import os; print(os.path.relpath('$TARGET', '$REPO_DIR'))")"
 
         if [ -L "$LINK" ]; then
             local EXISTING_TARGET
@@ -135,6 +146,52 @@ build_keycloak() {
         $_SETUP_BUILD -t tsm-keycloak:local "$TSM_DIR/keycloak"
         ok "Built tsm-keycloak:local"
     fi
+}
+
+# ─── Derive URLs from PUBLIC_HOSTNAME + PUBLIC_PORT ──────────────────────────
+#
+# Docker Compose .env files do NOT support self-referencing variables.
+# This function computes all URL-typed variables from PUBLIC_HOSTNAME and
+# PUBLIC_PORT so the user only ever edits those two values.
+
+resolve_derived_env() {
+    local ENV="$DEPLOY_DIR/.env"
+    info "Computing derived URLs from PUBLIC_HOSTNAME / PUBLIC_PORT..."
+
+    local HOST PORT BASE_URL
+    HOST="$(grep -m1 '^PUBLIC_HOSTNAME=' "$ENV" | cut -d= -f2-)"
+    PORT="$(grep -m1 '^PUBLIC_PORT=' "$ENV" | cut -d= -f2-)"
+    HOST="${HOST:-localhost}"
+    PORT="${PORT:-8080}"
+
+    # Omit :80 from URLs (standard HTTP port).
+    if [ "$PORT" = "80" ]; then
+        BASE_URL="http://${HOST}"
+    else
+        BASE_URL="http://${HOST}:${PORT}"
+    fi
+
+    # List of derived replacements: VARNAME <tab> VALUE
+    local -a DERIVED=(
+        "PROXY_URL=${BASE_URL}"
+        "KEYCLOAK_EXTERNAL_URL=${BASE_URL}/keycloak"
+        "KEYCLOAK_HOSTNAME_URL=${BASE_URL}/keycloak"
+        "VISUALIZATION_PROXY_URL=${BASE_URL}/visualization/"
+        "STA_PROXY_URL=${BASE_URL}/sta/"
+        "PROXY_PLAIN_PORT_MAPPING=127.0.0.1:${PORT}:80"
+        "OBJECT_STORAGE_BROWSER_REDIRECT_URL=http://${HOST}/object-storage/"
+        "THING_MANAGEMENT_FRONTEND_APP_URL=http://${HOST}/thing-management"
+    )
+
+    for entry in "${DERIVED[@]}"; do
+        local KEY="${entry%%=*}"
+        local VAL="${entry#*=}"
+        if grep -q "^${KEY}=" "$ENV"; then
+            sed -i "s|^${KEY}=.*|${KEY}=${VAL}|" "$ENV"
+        fi
+    done
+
+    ok "Derived URLs set (base: ${BASE_URL})"
 }
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
@@ -177,6 +234,7 @@ cd "$DEPLOY_DIR"
 check_prereqs
 clone_repos
 setup_env
+resolve_derived_env
 create_symlinks
 build_keycloak
 print_summary
