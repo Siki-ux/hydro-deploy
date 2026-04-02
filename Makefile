@@ -216,8 +216,11 @@ endif
 
 .PHONY: build
 build:
-	@echo "Building TSM keycloak image..."
-	$(_BUILD_CMD) --build-arg SKIP_SSL_VERIFY=$(SKIP_SSL_VERIFY) -t tsm-keycloak:local $(TSM_DIR)/keycloak
+	@echo "Building TSM services..."
+	$(COMPOSE) build init keycloak frost cron-scheduler \
+		worker-configdb-updater worker-file-ingest worker-grafana-user-orgs \
+		worker-monitor-mqtt worker-mqtt-ingest worker-run-qaqc \
+		worker-sync-extapi worker-sync-extsftp worker-thing-setup
 	@echo "Building water-dp services..."
 	$(_WATER_BUILD_COMPOSE) build api worker frontend
 	$(_WATER_BUILD_COMPOSE) --profile seed build water-dp-seed
@@ -286,7 +289,5 @@ _check-env:
 	@grep -q "changeme" $(ENV_FILE) && \
 		echo "WARNING: .env still contains 'changeme' placeholders. Run: make secrets" || true
 
-.PHONY: _check-tunnel-token
-_check-tunnel-token:
-	@grep -q "^CLOUDFLARE_TUNNEL_TOKEN=." $(ENV_FILE) || \
-		(echo "ERROR: CLOUDFLARE_TUNNEL_TOKEN not set in $(ENV_FILE)." && exit 1)
+# _check-tunnel-token removed: tunnel compose auto-detects quick vs named mode
+# based on whether CLOUDFLARE_TUNNEL_TOKEN is set.

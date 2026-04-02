@@ -14,6 +14,13 @@
 #        api.your-domain.com     → http://water-dp-api:8000
 #   4. Copy the tunnel token and set CLOUDFLARE_TUNNEL_TOKEN in .env
 #
+# Modes:
+#   Quick tunnel (no token needed): generates a random *.trycloudflare.com URL.
+#     Leave CLOUDFLARE_TUNNEL_TOKEN empty in .env.
+#
+#   Named tunnel (stable domain): set CLOUDFLARE_TUNNEL_TOKEN in .env.
+#     The container will use `tunnel run` with the token.
+#
 # Usage:
 #   make up-tunnel          # start everything including the tunnel
 #   make logs-tunnel        # follow cloudflared logs
@@ -23,15 +30,25 @@ services:
     image: cloudflare/cloudflared:2024.12.2
     container_name: hydro-cloudflared
     restart: unless-stopped
-    # Quick tunnel (no config needed): generates a random *.trycloudflare.com URL.
-    # Named tunnel (stable domain): set CLOUDFLARE_TUNNEL_TOKEN in .env and change
-    # command to: tunnel --no-autoupdate run
-    command: tunnel --no-autoupdate --url http://proxy:80
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    # If TUNNEL_TOKEN is set, run a named tunnel; otherwise run a quick tunnel.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -n "$$TUNNEL_TOKEN" ]; then
+          exec cloudflared tunnel --no-autoupdate run --token "$$TUNNEL_TOKEN"
+        else
+          exec cloudflared tunnel --no-autoupdate --url http://proxy:80
+        fi
     networks:
       - water_shared_net
     depends_on:
-      - proxy
+      proxy:
+        condition: service_healthy
 
 networks:
   water_shared_net:
     name: hydro-platform-net
+    external: true
