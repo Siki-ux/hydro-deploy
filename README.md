@@ -15,10 +15,14 @@ hydro-deploy/                      ← you are here
 ├── docker-compose.podman.yml      ← network bridge layer — Podman (committed, hand-maintained)
 ├── docker-compose.tunnel.yml      ← Cloudflare Tunnel (optional, Docker + Podman)
 ├── Makefile                       ← all operations
+├── docs/
+│   └── PLATFORM_AUDIT.md          ← architecture audit and remediation status
 └── scripts/
     ├── setup.sh                   ← first-time setup
     ├── generate-secrets.sh        ← fill secure passwords into .env
     ├── check.sh                   ← health check all services and endpoints
+    ├── start-docker.sh            ← start script called by Makefile (Docker)
+    ├── start-podman.sh            ← start script called by Makefile (Podman)
     ├── podman-prep.sh             ← generate .podman.yml files + create network
     └── podman_prep.py             ← Python script called by podman-prep.sh
 
@@ -56,16 +60,18 @@ make up
 make migrate
 ```
 
-Access points after `make up` (with `PUBLIC_HOSTNAME=localhost`):
+Access points after `make up` (with `PUBLIC_HOSTNAME=localhost` and `PUBLIC_PORT=8080`):
 
 | Service       | URL                                          |
 |---------------|----------------------------------------------|
-| Hydro Portal  | http://localhost/portal                      |
-| water-dp API  | http://localhost/water-api/api/v1/docs       |
-| FROST API     | http://localhost/sta/v1.1                    |
+| Hydro Portal  | http://localhost:8080/portal                |
+| water-dp API  | http://localhost:8080/water-api/api/v1/docs |
+| FROST API     | http://localhost:8080/sta/v1.1               |
 | Keycloak      | http://localhost:8081                        |
 | GeoServer     | http://localhost:8079/geoserver              |
 | MinIO console | http://localhost:9001                        |
+
+> **Note**: If you set `PUBLIC_PORT=80`, omit the port from URLs.
 
 ---
 
@@ -119,13 +125,15 @@ make migrate
 
 `make PODMAN=1 up` first runs `scripts/podman-prep.sh`, which:
 
-1. Calls `podman_prep.py` on each of the four source compose files, producing:
+1. Calls `podman_prep.py` on each of the three source compose files, producing:
    ```
    ../tsm-orchestration/docker-compose.podman.yml
    ../water-dp/docker-compose.podman.yml
    ../water-dp/docker-compose.tsm.podman.yml
-   docker-compose.podman.yml               ← already committed, not regenerated
    ```
+   `docker-compose.podman.yml` (this repo) and
+   `../tsm-orchestration/docker-compose.override.podman.yml` are committed and
+   hand-maintained — they are **not** regenerated.
 2. Creates the `hydro-platform-net` network if it does not exist.
 
 Then the full command becomes:
@@ -134,6 +142,7 @@ Then the full command becomes:
 env UID=<your-uid> GID=<your-gid>  \
   podman compose --in-pod false -p hydro-platform \
   -f ../tsm-orchestration/docker-compose.podman.yml \
+  -f ../tsm-orchestration/docker-compose.override.podman.yml \
   -f ../water-dp/docker-compose.podman.yml \
   -f ../water-dp/docker-compose.tsm.podman.yml \
   -f docker-compose.podman.yml \
@@ -185,6 +194,11 @@ make prep-podman               # regenerate .podman.yml files manually
 Cloudflare Tunnel gives HTTPS access from the internet without opening firewall
 ports or having a static IP. Works identically with Docker and Podman.
 
+The tunnel compose auto-detects the mode based on `CLOUDFLARE_TUNNEL_TOKEN`:
+
+- **Named tunnel** (token set): uses your Cloudflare dashboard configuration with a persistent subdomain.
+- **Quick tunnel** (token empty or unset): creates a temporary `*.trycloudflare.com` URL with zero configuration — useful for demos and testing.
+
 Traffic flow:
 
 ```
@@ -195,7 +209,17 @@ Browser (internet)
         → all services
 ```
 
-### One-time tunnel configuration
+### Quick tunnel (zero config)
+
+```bash
+# Leave CLOUDFLARE_TUNNEL_TOKEN empty in .env (or don't set it)
+make up-tunnel
+
+# Check the logs for the random *.trycloudflare.com URL
+make logs-tunnel
+```
+
+### Named tunnel configuration
 
 1. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com) → **Networks → Tunnels → Create tunnel**
 2. Name it `hydro-platform`
@@ -257,7 +281,13 @@ make build           # rebuild all locally compiled images
 make build-api       # rebuild only api + worker
 make build-frontend  # rebuild only frontend
 
+make redeploy-api    # rebuild + recreate api/worker containers
+make redeploy-frontend # rebuild + recreate frontend container
+make update-env      # re-derive URLs after changing PUBLIC_PORT/HOSTNAME
+make down-tunnel     # stop services including tunnel
+
 make clean           # ⚠ stop + delete all volumes (data loss!)
+make clean-env       # remove .env files so setup+secrets can recreate them
 make prune           # remove unused Docker images and networks
 ```
 
@@ -279,11 +309,15 @@ docker compose \
 ```
 
 `docker-compose.yml` (this repo) does three things:
-1. Maps both network names (`water_shared_net` and `tsm_network`) to the same
+1. Maps all network names (`default`, `water_shared_net`, and `tsm_network`) to the same
    Docker network `hydro-platform-net`, so all containers can reach each other.
-2. Disables `postgres-app` (water-dp's standalone DB) — TSM's `database` is used.
-3. Injects `MINIO_URL=object-storage:9000` into water-dp services so MinIO
-   is always reachable by container name regardless of `.env` values.
+2. Restores `geoserver-init` to use `postgres-app` (water-dp's dedicated GeoServer DB),
+   overriding `docker-compose.tsm.yml` which redirects it to TSM's database.
+3. Sets the correct `MINIO_URL` so water-dp-api finds MinIO by container name.
+
+Additionally, it removes dev bind mounts (code is baked into images),
+injects environment variables for database, MQTT, Keycloak, and tuning
+parameters, and passes `SKIP_SSL_VERIFY` build args to TSM services.
 
 ---
 
@@ -295,6 +329,7 @@ Both names are in `.env` so both stacks read the value they expect.
 | Variable(s)                                         | Used by        | Note    |
 |-----------------------------------------------------|----------------|---------|
 | `DATABASE_PASSWORD` / `TIMEIO_DB_PASSWORD`          | both           | @sync   |
+| `DATABASE_PASSWORD` / `MQTT_AUTH_POSTGRES_PASS`     | both           | @sync   |
 | `THING_MANAGEMENT_MQTT_PASS` / `MQTT_PASSWORD`      | TSM / water-dp | @sync   |
 | `KEYCLOAK_ADMIN_PASS` / `KEYCLOAK_ADMIN_PASSWORD`   | TSM / water-dp | @sync   |
 | `FERNET_ENCRYPTION_SECRET`                          | both           |         |
