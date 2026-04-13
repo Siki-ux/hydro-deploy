@@ -13,6 +13,12 @@ TSM_DIR    ?= ../tsm-orchestration
 WATER_DIR  ?= ../water-dp
 ENV_FILE   ?= .env
 
+# Load SKIP_SSL_VERIFY from .env (defaults to false if not set or .env missing)
+SKIP_SSL_VERIFY ?= $(shell grep -s '^SKIP_SSL_VERIFY=' $(ENV_FILE) | cut -d= -f2 || echo false)
+ifeq ($(SKIP_SSL_VERIFY),)
+  SKIP_SSL_VERIFY = false
+endif
+
 # ─── Engine detection ─────────────────────────────────────────────────────────
 
 # Explicit override wins; otherwise auto-detect.
@@ -56,6 +62,7 @@ help:
 	@echo "  First time:"
 	@echo "    make setup            Clone repos, create .env, link configs"
 	@echo "    make secrets          Generate secure random passwords into .env"
+	@echo "    make update-env       Re-derive URLs after changing PUBLIC_PORT/HOSTNAME"
 	@echo "    make build            Build images that need local compilation"
 	@echo "    make up               Start the full stack"
 	@echo ""
@@ -80,7 +87,10 @@ help:
 	@echo "  Maintenance:"
 	@echo "    make pull             Pull latest images"
 	@echo "    make build            (Re)build locally compiled images"
+	@echo "    make redeploy-api     Rebuild + recreate api/worker containers"
+	@echo "    make redeploy-frontend Rebuild + recreate frontend container"
 	@echo "    make clean            Stop + delete all volumes (destructive!)"
+	@echo "    make clean-env        Remove .env files so setup+secrets can recreate them"
 	@echo "    make prune            Remove unused images and networks"
 	@echo ""
 
@@ -93,6 +103,24 @@ setup:
 .PHONY: secrets
 secrets:
 	@./scripts/generate-secrets.sh
+
+# Re-compute derived URLs (PROXY_URL, KEYCLOAK_*, …) after changing
+# PUBLIC_HOSTNAME or PUBLIC_PORT in .env.
+.PHONY: update-env
+update-env:
+	@HOST=$$(grep -m1 '^PUBLIC_HOSTNAME=' $(ENV_FILE) | cut -d= -f2-); \
+	 PORT=$$(grep -m1 '^PUBLIC_PORT=' $(ENV_FILE) | cut -d= -f2-); \
+	 HOST=$${HOST:-localhost}; PORT=$${PORT:-8080}; \
+	 if [ "$$PORT" = "80" ]; then BASE="http://$$HOST"; else BASE="http://$$HOST:$$PORT"; fi; \
+	 sed -i "s|^PROXY_URL=.*|PROXY_URL=$$BASE|" $(ENV_FILE); \
+	 sed -i "s|^KEYCLOAK_EXTERNAL_URL=.*|KEYCLOAK_EXTERNAL_URL=$$BASE/keycloak|" $(ENV_FILE); \
+	 sed -i "s|^KEYCLOAK_HOSTNAME_URL=.*|KEYCLOAK_HOSTNAME_URL=$$BASE/keycloak|" $(ENV_FILE); \
+	 sed -i "s|^VISUALIZATION_PROXY_URL=.*|VISUALIZATION_PROXY_URL=$$BASE/visualization/|" $(ENV_FILE); \
+	 sed -i "s|^STA_PROXY_URL=.*|STA_PROXY_URL=$$BASE/sta/|" $(ENV_FILE); \
+	 sed -i "s|^PROXY_PLAIN_PORT_MAPPING=.*|PROXY_PLAIN_PORT_MAPPING=127.0.0.1:$$PORT:80|" $(ENV_FILE); \
+	 sed -i "s|^OBJECT_STORAGE_BROWSER_REDIRECT_URL=.*|OBJECT_STORAGE_BROWSER_REDIRECT_URL=http://$$HOST/object-storage/|" $(ENV_FILE); \
+	 sed -i "s|^THING_MANAGEMENT_FRONTEND_APP_URL=.*|THING_MANAGEMENT_FRONTEND_APP_URL=http://$$HOST/thing-management|" $(ENV_FILE); \
+	 echo "Derived URLs updated (base: $$BASE)"
 
 # ─── Podman prep ──────────────────────────────────────────────────────────────
 # Generates .podman.yml variants of all compose files and pre-creates the
@@ -111,14 +139,7 @@ up: _check-env prep-podman
 	@TSM_DIR=$(TSM_DIR) WATER_DIR=$(WATER_DIR) ENV_FILE=$(ENV_FILE) ./scripts/start-podman.sh
 else
 up: _check-env
-	$(COMPOSE) up -d
-	@echo ""
-	@echo "  Stack started (docker). Access points:"
-	@echo "    Portal:    http://$(shell grep ^PUBLIC_HOSTNAME $(ENV_FILE) | cut -d= -f2)/portal"
-	@echo "    API docs:  http://$(shell grep ^PUBLIC_HOSTNAME $(ENV_FILE) | cut -d= -f2)/water-api/api/v1/docs"
-	@echo "    Keycloak:  http://$(shell grep ^PUBLIC_HOSTNAME $(ENV_FILE) | cut -d= -f2):8081"
-	@echo "    GeoServer: http://$(shell grep ^PUBLIC_HOSTNAME $(ENV_FILE) | cut -d= -f2):8079/geoserver"
-	@echo ""
+	@TSM_DIR=$(TSM_DIR) WATER_DIR=$(WATER_DIR) ENV_FILE=$(ENV_FILE) ./scripts/start-docker.sh
 endif
 
 .PHONY: up-tunnel
@@ -127,11 +148,7 @@ up-tunnel: _check-env prep-podman
 	@TSM_DIR=$(TSM_DIR) WATER_DIR=$(WATER_DIR) ENV_FILE=$(ENV_FILE) ./scripts/start-podman.sh --tunnel
 else
 up-tunnel: _check-env
-	$(COMPOSE_TUNNEL) up -d
-	@echo ""
-	@echo "  Stack started with Cloudflare Tunnel."
-	@echo "  Internet: Cloudflare edge → cloudflared → proxy → services"
-	@echo ""
+	@TSM_DIR=$(TSM_DIR) WATER_DIR=$(WATER_DIR) ENV_FILE=$(ENV_FILE) ./scripts/start-docker.sh --tunnel
 endif
 
 .PHONY: down
@@ -199,8 +216,11 @@ endif
 
 .PHONY: build
 build:
-	@echo "Building TSM keycloak image..."
-	$(_BUILD_CMD) -t tsm-keycloak:local $(TSM_DIR)/keycloak
+	@echo "Building TSM services..."
+	$(COMPOSE) build init keycloak frost cron-scheduler \
+		worker-configdb-updater worker-file-ingest worker-grafana-user-orgs \
+		worker-monitor-mqtt worker-mqtt-ingest worker-run-qaqc \
+		worker-sync-extapi worker-sync-extsftp worker-thing-setup
 	@echo "Building water-dp services..."
 	$(_WATER_BUILD_COMPOSE) build api worker frontend
 	$(_WATER_BUILD_COMPOSE) --profile seed build water-dp-seed
@@ -213,6 +233,14 @@ build-api:
 .PHONY: build-frontend
 build-frontend:
 	$(_WATER_BUILD_COMPOSE) build frontend
+
+.PHONY: redeploy-api
+redeploy-api: build-api
+	$(COMPOSE) up -d --no-deps api worker
+
+.PHONY: redeploy-frontend
+redeploy-frontend: build-frontend
+	$(COMPOSE) up -d --no-deps frontend
 
 # ─── Maintenance ──────────────────────────────────────────────────────────────
 
@@ -240,9 +268,18 @@ else
 clean:
 	@echo "WARNING: This will delete ALL data volumes. Type 'yes' to confirm:"
 	@read CONFIRM && [ "$$CONFIRM" = "yes" ] || (echo "Aborted." && exit 1)
-	$(COMPOSE) down -v
+	$(COMPOSE) --profile seed down -v --remove-orphans
 	@echo "Volumes deleted."
 endif
+
+# Remove .env files (main + symlinks) so `make setup && make secrets` can recreate them.
+.PHONY: clean-env
+clean-env:
+	@echo "Removing .env files..."
+	rm -f $(ENV_FILE)
+	rm -f $(TSM_DIR)/.env
+	rm -f $(WATER_DIR)/.env
+	@echo "Done. Run 'make setup' then 'make secrets' to recreate."
 
 # ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -252,7 +289,5 @@ _check-env:
 	@grep -q "changeme" $(ENV_FILE) && \
 		echo "WARNING: .env still contains 'changeme' placeholders. Run: make secrets" || true
 
-.PHONY: _check-tunnel-token
-_check-tunnel-token:
-	@grep -q "^CLOUDFLARE_TUNNEL_TOKEN=." $(ENV_FILE) || \
-		(echo "ERROR: CLOUDFLARE_TUNNEL_TOKEN not set in $(ENV_FILE)." && exit 1)
+# _check-tunnel-token removed: tunnel compose auto-detects quick vs named mode
+# based on whether CLOUDFLARE_TUNNEL_TOKEN is set.

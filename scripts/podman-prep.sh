@@ -26,15 +26,30 @@ cd "$DEPLOY_DIR"
 
 info "Generating podman-compatible compose files..."
 
-python3 scripts/podman_prep.py \
+# Find a working Python interpreter.
+# On Windows, 'python3' may resolve to a Microsoft Store stub that always fails.
+# Test with --version to confirm the interpreter actually works.
+PYTHON=""
+for cmd in python3 python py; do
+    if command -v "$cmd" &>/dev/null && "$cmd" --version &>/dev/null; then
+        PYTHON="$cmd"
+        break
+    fi
+done
+if [ -z "$PYTHON" ]; then
+    echo "ERROR: No working Python interpreter found. Install Python 3 and ensure it is on PATH." >&2
+    exit 1
+fi
+
+"$PYTHON" scripts/podman_prep.py \
     "$TSM_DIR/docker-compose.yml" \
     "$TSM_DIR/docker-compose.podman.yml"
 
-python3 scripts/podman_prep.py \
+"$PYTHON" scripts/podman_prep.py \
     "$WATER_DIR/docker-compose.yml" \
     "$WATER_DIR/docker-compose.podman.yml"
 
-python3 scripts/podman_prep.py \
+"$PYTHON" scripts/podman_prep.py \
     "$WATER_DIR/docker-compose.tsm.yml" \
     "$WATER_DIR/docker-compose.tsm.podman.yml"
 
@@ -48,6 +63,11 @@ ok "All .podman.yml files generated"
 #
 # Podman does not auto-create networks named in compose files the same way
 # Docker does. We pre-create the network so podman-compose doesn't fail.
+
+if ! command -v podman &>/dev/null; then
+    ok "Podman not found — skipping network and DNS setup (Docker handles this automatically)"
+    exit 0
+fi
 
 NETWORK="hydro-platform-net"
 

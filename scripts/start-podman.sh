@@ -109,7 +109,7 @@ $COMPOSE_TUNNEL up -d
 # postgres-app depends_on proxy (service_healthy) in docker-compose.podman.yml,
 # so it is in Created state. Start it once proxy is up.
 
-wait_healthy hydro-platform_proxy_1 300
+wait_healthy hydro-platform-proxy-1 300
 
 info "Starting postgres-app (GeoServer dedicated DB)..."
 podman start water-dp-postgres 2>/dev/null || warn "water-dp-postgres already running"

@@ -27,23 +27,21 @@ networks:
   # reach every other container regardless of which network name it declares.
   default:
     name: hydro-platform-net
-    driver: bridge
+    external: true
 
   water_shared_net:
     name: hydro-platform-net
-    driver: bridge
+    external: true
 
   tsm_network:
     name: hydro-platform-net
-    driver: bridge
+    external: true
 
 services:
   # water-dp-geoserver and geoserver-init use their own dedicated postgres (postgres-app).
   # Restore geoserver-init to point at postgres-app, not TSM's database
   # (docker-compose.tsm.yml overrides it to 'database'; we revert that here).
   # test-sftp-server: seed-only — only starts when --profile seed is active.
-  # Docker Compose skips service_healthy deps on profile-inactive services,
-  # so worker-sync-extsftp starts normally without it.
   test-sftp-server:
     profiles:
       - seed
@@ -56,11 +54,29 @@ services:
       - DB_NAME=${POSTGRES_DB:-water_app}
       - DB_USER=${DATABASE_USER:-postgres}
       - DB_PASSWORD=${DATABASE_PASSWORD:-postgres}
+    # Fix paths: water-dp relative paths resolve from TSM dir (project dir).
+    volumes: !override
+      - ../water-dp/geoserver/scripts/seed_geoserver.py:/app/seed_geoserver.py
+      - ../water-dp/geoserver/data:/app/data
+
+  # Fix volume path: water-dp's ./geoserver resolves from TSM dir by default.
+  water-dp-geoserver:
+    volumes: !override
+      - geoserver_data:/opt/geoserver/data_dir
+      - ../water-dp/geoserver/conf/server.xml:/usr/local/tomcat/conf/server.xml
+    # CSRF controllable via .env
+    environment:
+      - JAVA_OPTS=-Xms512m -Xmx1024m -DGEOSERVER_CSRF_DISABLED=${GEOSERVER_CSRF_DISABLED:-true}
 
   # Ensure water-dp-api uses the correct MinIO and database URLs.
   # (docker-compose.tsm.yml already sets these but we make them explicit here
   #  so they are set even if someone runs without docker-compose.tsm.yml.)
   api:
+    # Remove dev bind mounts (code is in the image); keep only named volumes.
+    volumes: !override
+      - temp_imports:/app/app/temp_imports
+      - ../tsm-orchestration/src/timeio/parser/mqtt_devices:/app/hardcoded_parsers:ro
+      - ../tsm-orchestration/src/timeio/ext_api.py:/app/hardcoded_syncers/ext_api.py:ro
     environment:
       - MINIO_URL=object-storage:9000
       - MINIO_ACCESS_KEY=${OBJECT_STORAGE_ROOT_USER:-minioadmin}
@@ -79,8 +95,23 @@ services:
       # Keycloak: water-dp uses KEYCLOAK_ADMIN_USERNAME/PASSWORD (TSM uses _USER/_PASS)
       - KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USER:-keycloak}
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASS:-changeme}
+      - MAX_SENSORS_PER_PROJECT=${MAX_SENSORS_PER_PROJECT:-10000}
+      # Controllable via hydro-deploy .env
+      - DEBUG=${DEBUG:-true}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["*"]}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-*}
+      - DATABASE_POOL_SIZE=${DATABASE_POOL_SIZE:-20}
+      - DATABASE_MAX_OVERFLOW=${DATABASE_MAX_OVERFLOW:-10}
+      - DATABASE_POOL_RECYCLE=${DATABASE_POOL_RECYCLE:-3600}
+      - DATABASE_CONNECT_TIMEOUT=${DATABASE_CONNECT_TIMEOUT:-30}
+      - SQLALCHEMY_LOG_LEVEL=${SQLALCHEMY_LOG_LEVEL:-WARNING}
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-4}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
 
   worker:
+    # Remove dev bind mounts (code is in the image); keep only named volumes.
+    volumes: !override
+      - temp_imports:/app/app/temp_imports
     environment:
       - MINIO_URL=object-storage:9000
       - MINIO_ACCESS_KEY=${OBJECT_STORAGE_ROOT_USER:-minioadmin}
@@ -94,3 +125,86 @@ services:
       - MQTT_BROKER_HOST=mqtt-broker
       - MQTT_USERNAME=${THING_MANAGEMENT_MQTT_USER:-frontendbus}
       - MQTT_PASSWORD=${THING_MANAGEMENT_MQTT_PASS:-changeme}
+      # Controllable via hydro-deploy .env
+      - DEBUG=${DEBUG:-true}
+      - DATABASE_POOL_SIZE=${DATABASE_POOL_SIZE:-20}
+      - DATABASE_MAX_OVERFLOW=${DATABASE_MAX_OVERFLOW:-10}
+      - DATABASE_POOL_RECYCLE=${DATABASE_POOL_RECYCLE:-3600}
+      - DATABASE_CONNECT_TIMEOUT=${DATABASE_CONNECT_TIMEOUT:-30}
+      - SQLALCHEMY_LOG_LEVEL=${SQLALCHEMY_LOG_LEVEL:-WARNING}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+  # TSM services: pass SKIP_SSL_VERIFY build arg for corporate proxy environments.
+  init:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  keycloak:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  frost:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  cron-scheduler:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  worker-configdb-updater:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  worker-file-ingest:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  worker-grafana-user-orgs:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  worker-monitor-mqtt:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  worker-mqtt-ingest:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  worker-run-qaqc:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  worker-sync-extapi:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+    environment:
+      SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ "$$SKIP_SSL_VERIFY" = "true" ]; then
+          mkdir -p /tmp/ssl_override
+          cat > /tmp/ssl_override/sitecustomize.py << 'PYEOF'
+        import os, ssl
+        if os.environ.get("SKIP_SSL_VERIFY","false").lower() == "true":
+            _orig_wrap = ssl.SSLContext.wrap_socket
+            def _patched_wrap(self, *a, **kw):
+                self.check_hostname = False
+                self.verify_mode = ssl.CERT_NONE
+                return _orig_wrap(self, *a, **kw)
+            ssl.SSLContext.wrap_socket = _patched_wrap
+        PYEOF
+          export PYTHONPATH="/tmp/ssl_override:$$PYTHONPATH"
+        fi
+        exec ./worker_launcher.sh python3 sync_extapi_manager.py
+  worker-sync-extsftp:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+  worker-thing-setup:
+    build:
+      args:
+        SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}

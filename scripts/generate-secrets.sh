@@ -24,28 +24,39 @@ skip()  { echo -e "${YELLOW}[skip]${NC}    $* (already set)"; }
 
 [ -f "$ENV_FILE" ] || { echo -e "${RED}[error]${NC} .env not found. Run: make setup"; exit 1; }
 
+# ─── Detect Python ────────────────────────────────────────────────────────────
+# On Windows the Microsoft Store stub `python3.exe` exists on PATH but fails
+# with "Python was not found", so we must verify the command actually works.
+if python3 --version >/dev/null 2>&1; then
+    PY=python3
+elif python --version >/dev/null 2>&1; then
+    PY=python
+else
+    echo -e "${RED}[error]${NC} python3 (or python) not found."; exit 1
+fi
+
 # ─── Generators ───────────────────────────────────────────────────────────────
 
 # 32-byte hex string
-hex32() { python3 -c "import secrets; print(secrets.token_hex(32))"; }
+hex32() { $PY -c "import secrets; print(secrets.token_hex(32))"; }
 
 # URL-safe base64 (for Fernet keys — must be exactly 32 bytes base64url-encoded)
-fernet_key() { python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"; }
+fernet_key() { $PY -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"; }
 
 # Fallback if cryptography not installed
 fernet_key_fallback() {
-    python3 -c "import secrets, base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+    $PY -c "import secrets, base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
 }
 
 # Strong passphrase: 4 random words + suffix (easy to type, hard to crack)
-passphrase() { python3 -c "
+passphrase() { $PY -c "
 import secrets, string
 chars = string.ascii_letters + string.digits
 return ''.join(secrets.choice(chars) for _ in range(24))
-" 2>/dev/null || python3 -c "import secrets; print(secrets.token_urlsafe(18))"; }
+" 2>/dev/null || $PY -c "import secrets; print(secrets.token_urlsafe(18))"; }
 
 gen_fernet() {
-    if python3 -c "from cryptography.fernet import Fernet" 2>/dev/null; then
+    if $PY -c "from cryptography.fernet import Fernet" 2>/dev/null; then
         fernet_key
     else
         fernet_key_fallback
@@ -58,9 +69,10 @@ set_var() {
     local KEY="$1"
     local NEW_VALUE="$2"
 
-    # Read current value
+    # Read current value, stripping inline comments and surrounding whitespace.
+    # .env.example lines look like: KEY=changeme      # some comment
     local CURRENT
-    CURRENT=$(grep -E "^${KEY}=" "$ENV_FILE" | head -1 | cut -d= -f2-)
+    CURRENT=$(grep -E "^${KEY}=" "$ENV_FILE" | head -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
 
     if [ "$CURRENT" = "changeme" ] || [ -z "$CURRENT" ]; then
         if [ "$DRY_RUN" = true ]; then
@@ -90,6 +102,13 @@ set_var "DATABASE_ADMIN_PASSWORD"  "$DB_PASS"
 set_var "DATABASE_PASSWORD"        "$DB_PASS"
 set_var "TIMEIO_DB_PASSWORD"       "$DB_PASS"
 set_var "MQTT_AUTH_POSTGRES_PASS"  "$DB_PASS"
+
+# Update DATABASE_URL to match the generated password (compose overrides this,
+# but keep .env consistent for tools that read it directly).
+if grep -q '^DATABASE_URL=' "$ENV_FILE"; then
+    sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://postgres:${DB_PASS}@database:5432/postgres?options=-csearch_path=water_dp,public|" "$ENV_FILE"
+fi
+
 set_var "KEYCLOAK_DATABASE_PASS"   "$(passphrase)"
 
 # Fernet key (identical in both repos, already shared via .env symlink)
@@ -122,6 +141,11 @@ set_var "NEXTAUTH_SECRET"   "$AUTH_SECRET"
 # Seed admin password
 set_var "SEED_ADMIN_PASSWORD" "$(passphrase)"
 
+# Flyway foreign-server passwords — connect to the same postgres instance
+# as DATABASE_ADMIN_PASSWORD, so they must share the same value.
+set_var "SMS_DB_PASSWORD"  "$DB_PASS"
+set_var "CV_DB_PASSWORD"   "$DB_PASS"
+
 # GeoServer (optional, default 'geoserver' is fine for dev)
 set_var "GEOSERVER_ADMIN_PASSWORD" "$(passphrase)"
 
@@ -135,5 +159,17 @@ else
     echo "          (should return nothing)"
     echo ""
     echo "  Commit reminder: .env is gitignored. Back it up securely."
+
+    # ─── Sync .env to sibling repos ──────────────────────────────────────────
+    # setup.sh creates symlinks, but on Windows (Git Bash without Developer
+    # Mode) ln -s silently creates copies. Re-copy so all repos stay in sync.
+    DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
+    PARENT_DIR="$(dirname "$DEPLOY_DIR")"
+    for REPO in "$PARENT_DIR/tsm-orchestration" "$PARENT_DIR/water-dp"; do
+        if [ -d "$REPO" ] && [ -f "$REPO/.env" ] && [ ! -L "$REPO/.env" ]; then
+            cp "$ENV_FILE" "$REPO/.env"
+            ok "Synced .env → $(basename "$REPO")/.env (not a symlink)"
+        fi
+    done
 fi
 echo ""
