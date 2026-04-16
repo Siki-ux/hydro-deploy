@@ -423,3 +423,9 @@ previously created by root (Docker), Podman can't write to it.
 make PODMAN=1 clean   # delete old volumes (data loss!)
 make PODMAN=1 up
 ```
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.

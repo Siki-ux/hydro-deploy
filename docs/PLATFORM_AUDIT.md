@@ -1,8 +1,12 @@
 # Hydro Platform — Architecture Audit & Analysis
 
-> **Audit Date:** 2026-04-02 | **Remediation Date:** 2026-04-03
+> **Audit Date:** 2026-04-02 | **Remediation Date:** 2026-04-03 | **Last Reviewed:** 2026-04-15
 > **Scope:** `water-dp`, `tsm-orchestration`, `hydro-deploy`
 > **Branch:** `water-dp@feat/v1`, `tsm-orchestration@strip-test`, `hydro-deploy@main`
+>
+> **Note:** Default credentials and CORS settings in `docker-compose.yml` are development
+> defaults overridable via `.env`. The `hydro-deploy` setup script generates production
+> secrets automatically.
 
 ---
 
