@@ -189,6 +189,88 @@ make prep-podman               # regenerate .podman.yml files manually
 
 ---
 
+## Production HTTPS with Let's Encrypt
+
+For a real domain with a TLS certificate, use the built-in nginx TLS config
+instead of Cloudflare Tunnel.
+
+### Prerequisites
+
+- A domain pointing at your server's public IP
+- Ports 80 and 443 reachable from the internet (for the certbot challenge and for traffic)
+- `certbot` installed on the host (`apt install certbot`)
+
+### 1. Obtain a certificate (standalone mode)
+
+Stop the proxy temporarily so certbot can bind to port 80:
+
+```bash
+make down   # or just: docker stop hydro-platform-proxy-1
+sudo certbot certonly --standalone -d your-domain.com
+make up
+```
+
+### 2. Copy certs into the deployment directory
+
+Let's Encrypt certificates live in `/etc/letsencrypt/live/` and are only
+readable by root. Copy them into the `certs/` directory (gitignored):
+
+```bash
+mkdir -p certs
+sudo cp /etc/letsencrypt/live/your-domain.com/fullchain.pem certs/
+sudo cp /etc/letsencrypt/live/your-domain.com/privkey.pem certs/
+sudo chown $USER:$USER certs/*.pem
+```
+
+### 3. Configure `.env`
+
+```bash
+PROXY_URL=https://your-domain.com
+PROXY_SITE_CONFIG_FILE=tsm.tls.conf
+PROXY_TLS_CERT_PATH=/path/to/hydro-deploy/certs/fullchain.pem
+PROXY_TLS_KEY_PATH=/path/to/hydro-deploy/certs/privkey.pem
+PROXY_PLAIN_PORT_MAPPING=0.0.0.0:80:80
+PROXY_TLS_PORT_MAPPING=0.0.0.0:443:443
+```
+
+Also set `KEYCLOAK_EXTERNAL_URL=https://your-domain.com` so Keycloak
+generates correct redirect URLs.
+
+### 4. Start
+
+```bash
+make up
+```
+
+The nginx proxy will now serve HTTP (redirects to HTTPS) and HTTPS.
+
+### 5. Auto-renewal hook
+
+Create `/etc/letsencrypt/renewal-hooks/deploy/hydroportal.sh` to automatically
+reload nginx when certbot renews:
+
+```bash
+#!/bin/bash
+set -e
+CERT_DIR=/path/to/hydro-deploy/certs
+cp /etc/letsencrypt/live/your-domain.com/fullchain.pem "$CERT_DIR/"
+cp /etc/letsencrypt/live/your-domain.com/privkey.pem   "$CERT_DIR/"
+chown ubuntu:ubuntu "$CERT_DIR"/*.pem
+docker exec hydro-platform-proxy-1 nginx -s reload
+```
+
+```bash
+chmod +x /etc/letsencrypt/renewal-hooks/deploy/hydroportal.sh
+```
+
+Certbot will invoke this hook automatically after each successful renewal
+(`certbot renew` is typically run by a system cron or systemd timer).
+
+> **Note**: Do not commit the `certs/` directory — it is gitignored because it
+> contains the TLS private key.
+
+---
+
 ## Internet access via Cloudflare Tunnel
 
 Cloudflare Tunnel gives HTTPS access from the internet without opening firewall
@@ -415,6 +497,19 @@ make PODMAN=1 restart
 ```bash
 make prep-podman    # recreates the network if missing
 ```
+
+**`400 Request Header Or Cookie Too Large` after login**
+Auth.js v5 stores the session as encrypted JWT cookies that can exceed 8 KB.
+The nginx `large_client_header_buffers 8 32k` directive in `tsm.tls.conf`
+handles this. If you see this error after a config change, ensure that
+directive is still present in the HTTPS server block.
+
+**nginx `upstream sent too big header` (login returns 404)**
+Same root cause as above but on the *response* side: Auth.js sets multiple
+large `Set-Cookie` headers when the sign-in succeeds. The `proxy_buffer_size 32k`
+and `proxy_buffers 8 32k` directives in `locations.conf` on the `/portal/`
+location handle this. Check that those directives are present if the sign-in
+request returns 404 from nginx.
 
 **Podman: volume permission denied**
 Rootless Podman maps container UIDs to subuid ranges. If a volume was
