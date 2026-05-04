@@ -1,6 +1,9 @@
 # Real secrets — never commit
 .env
 
+# TLS certificates — contain private keys, never commit
+certs/
+
 # Generated podman-compose files (created by scripts/podman-prep.sh)
 # These are derived from the standard compose files and should not be committed
 # in the repos they live in (tsm-orchestration/ and water-dp/).
