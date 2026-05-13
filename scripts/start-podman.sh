@@ -147,13 +147,21 @@ fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
-PUBLIC_HOST=$(grep "^PUBLIC_HOSTNAME" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "localhost")
+PUBLIC_HOST=$(grep -m1 "^PUBLIC_HOSTNAME=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "localhost")
+PUBLIC_PORT=$(grep -m1 "^PUBLIC_PORT=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "8080")
+KC_PORT=$(grep -m1 "^KEYCLOAK_PORT=" "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "8081")
+
+if [ "$PUBLIC_PORT" = "80" ]; then
+    BASE="http://${PUBLIC_HOST}"
+else
+    BASE="http://${PUBLIC_HOST}:${PUBLIC_PORT}"
+fi
 
 echo ""
 ok "Stack started (podman). Access points:"
-echo "    Portal:    http://${PUBLIC_HOST}/portal"
-echo "    API docs:  http://${PUBLIC_HOST}/water-api/api/v1/docs"
-echo "    Keycloak:  http://${PUBLIC_HOST}:8081"
+echo "    Portal:    ${BASE}/portal"
+echo "    API docs:  ${BASE}/water-api/api/v1/docs"
+echo "    Keycloak:  http://${PUBLIC_HOST}:${KC_PORT}"
 echo "    GeoServer: http://${PUBLIC_HOST}:8079/geoserver"
 if [ "$TUNNEL" = "1" ]; then
     echo ""

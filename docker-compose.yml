@@ -71,6 +71,17 @@ services:
   # Ensure water-dp-api uses the correct MinIO and database URLs.
   # (docker-compose.tsm.yml already sets these but we make them explicit here
   #  so they are set even if someone runs without docker-compose.tsm.yml.)
+
+  # Reset TSM legacy frontend fields that merge into water-dp's frontend.
+  # TSM defines `frontend` as a Django app with user: appuser, command: bash…,
+  # entrypoint: "", and bind-mount volumes — none of which apply to the
+  # Next.js container that water-dp provides under the same service name.
+  frontend:
+    user: ""
+    entrypoint: !reset []
+    command: !reset []
+    volumes: !override []
+
   api:
     # Remove dev bind mounts (code is in the image); keep only named volumes.
     volumes: !override
@@ -175,7 +186,7 @@ services:
     build:
       args:
         SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
-  worker-sync-extapi:
+  worker-sync-extapis:
     build:
       args:
         SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
@@ -208,3 +219,36 @@ services:
     build:
       args:
         SKIP_SSL_VERIFY: ${SKIP_SSL_VERIFY:-false}
+
+  # ─── Disabled TSM services ──────────────────────────────────────────────────
+  # These services require the UFZ registry (registry.hzdr.de) which is not
+  # accessible from corporate networks. We are not using them in the Hydro
+  # Platform, so disable them via profiles.
+  thing-management-frontend:
+    profiles:
+      - disabled
+  thing-management-api:
+    profiles:
+      - disabled
+  flyway-thing-management:
+    profiles:
+      - disabled
+  tsmdl:
+    profiles:
+      - disabled
+
+  # Override proxy depends_on to remove references to disabled services.
+  proxy:
+    depends_on: !override
+      frontend:
+        condition: service_started
+      visualization:
+        condition: service_started
+      object-storage:
+        condition: service_started
+      frost:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully

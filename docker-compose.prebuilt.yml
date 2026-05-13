@@ -44,7 +44,7 @@ services:
   worker-mqtt-ingest:
     image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
 
-  worker-sync-extapi:
+  worker-sync-extapis:
     image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
 
   worker-sync-extsftp:
