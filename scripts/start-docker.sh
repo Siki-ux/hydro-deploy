@@ -65,6 +65,11 @@ _FILES="\
   -f $WATER_DIR/docker-compose.tsm.yml \
   -f $DEPLOY_DIR/docker-compose.yml"
 
+# When PREBUILT=1 is set, layer the pre-built image overrides on top.
+if [ "${PREBUILT:-0}" = "1" ]; then
+    _FILES="$_FILES -f $DEPLOY_DIR/docker-compose.prebuilt.yml"
+fi
+
 COMPOSE="docker compose --project-name hydro-platform $_FILES --env-file $ENV_FILE"
 if [ "$TUNNEL" = "1" ]; then
     COMPOSE_FULL="$COMPOSE -f $DEPLOY_DIR/docker-compose.tunnel.yml"

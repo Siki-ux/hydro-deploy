@@ -13,6 +13,7 @@ hydro-deploy/                      ← you are here
 ├── .env                           ← real config (gitignored, symlinked into repos)
 ├── docker-compose.yml             ← network bridge layer — Docker
 ├── docker-compose.podman.yml      ← network bridge layer — Podman (committed, hand-maintained)
+├── docker-compose.prebuilt.yml    ← GHCR image overrides (used with PREBUILT=1)
 ├── docker-compose.tunnel.yml      ← Cloudflare Tunnel (optional, Docker + Podman)
 ├── Makefile                       ← all operations
 ├── docs/
@@ -72,6 +73,54 @@ Access points after `make up` (with `PUBLIC_HOSTNAME=localhost` and `PUBLIC_PORT
 | MinIO console | http://localhost:9001                        |
 
 > **Note**: If you set `PUBLIC_PORT=80`, omit the port from URLs.
+
+---
+
+## Pre-built images (no local compilation)
+
+Skip local image compilation by pulling pre-built images from GitHub Container
+Registry. The source repos are still required (for compose files and
+configuration), but no build toolchain is needed.
+
+```bash
+git clone <this-repo> hydro-deploy
+cd hydro-deploy
+
+PREBUILT=1 make setup   # clones repos, creates .env, skips keycloak build
+make secrets
+
+# Pull images and start — no `make build` required
+make PREBUILT=1 up
+make migrate
+```
+
+Pin a specific release:
+
+```bash
+make PREBUILT=1 IMAGE_TAG=v1.0.0 up
+```
+
+Or export once for the session:
+
+```bash
+export PREBUILT=1
+export IMAGE_TAG=v1.0.0
+make up
+```
+
+The `PREBUILT=1` flag layers [`docker-compose.prebuilt.yml`](docker-compose.prebuilt.yml)
+on top of the standard compose files, overriding `image:` references from local
+builds to GHCR packages. Build targets (`make build`, `make build-api`, etc.)
+become no-ops; `make redeploy-api/frontend` will pull and recreate instead of
+rebuilding.
+
+Custom registries can be set via environment variables:
+
+| Variable | Default |
+|---|---|
+| `WATER_DP_IMAGE_REGISTRY` | `ghcr.io/siki-ux/water-dp` |
+| `TSM_IMAGE_REGISTRY` | `ghcr.io/siki-ux/tsm-orchestration` |
+| `IMAGE_TAG` | `latest` |
 
 ---
 
