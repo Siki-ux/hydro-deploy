@@ -1,0 +1,63 @@
+# docker-compose.prebuilt.yml — Pre-built image overrides
+#
+# Used when PREBUILT=1: pulls images from GHCR instead of building locally.
+# Layered on top of the standard compose files via the Makefile.
+#
+# Image registries (set in .env or override with env vars):
+#   WATER_DP_IMAGE_REGISTRY  — defaults to ghcr.io/siki-ux/water-dp
+#   TSM_IMAGE_REGISTRY       — defaults to ghcr.io/siki-ux/tsm-orchestration
+#   IMAGE_TAG                — defaults to latest
+
+services:
+  # ─── water-dp services ───────────────────────────────────────────────────────
+  api:
+    image: "${WATER_DP_IMAGE_REGISTRY:-ghcr.io/siki-ux/water-dp}-api:${IMAGE_TAG:-latest}"
+
+  frontend:
+    image: "${WATER_DP_IMAGE_REGISTRY:-ghcr.io/siki-ux/water-dp}-frontend:${IMAGE_TAG:-latest}"
+
+  worker:
+    image: "${WATER_DP_IMAGE_REGISTRY:-ghcr.io/siki-ux/water-dp}-api:${IMAGE_TAG:-latest}"
+
+  water-dp-seed:
+    image: "${WATER_DP_IMAGE_REGISTRY:-ghcr.io/siki-ux/water-dp}-api:${IMAGE_TAG:-latest}"
+
+  # ─── tsm-orchestration services ──────────────────────────────────────────────
+  init:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/init:${IMAGE_TAG:-latest}"
+
+  frost:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/frost:${IMAGE_TAG:-latest}"
+
+  worker-configdb-updater:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/configdb-updater:${IMAGE_TAG:-latest}"
+
+  worker-thing-setup:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
+
+  worker-file-ingest:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
+
+  worker-run-qaqc:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
+
+  worker-mqtt-ingest:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
+
+  worker-sync-extapi:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
+
+  worker-sync-extsftp:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
+
+  worker-grafana-user-orgs:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
+
+  worker-monitor-mqtt:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/dispatcher:${IMAGE_TAG:-latest}"
+
+  cron-scheduler:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/cron-scheduler:${IMAGE_TAG:-latest}"
+
+  keycloak:
+    image: "${TSM_IMAGE_REGISTRY:-ghcr.io/siki-ux/tsm-orchestration}/keycloak:${IMAGE_TAG:-latest}"

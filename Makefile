@@ -19,6 +19,12 @@ ifeq ($(SKIP_SSL_VERIFY),)
   SKIP_SSL_VERIFY = false
 endif
 
+# ─── Pre-built images ─────────────────────────────────────────────────────────
+# Set PREBUILT=1 to pull pre-built images from GHCR instead of building locally.
+# Requires public (or authenticated) access to the GHCR packages.
+PREBUILT  ?= 0
+IMAGE_TAG ?= latest
+
 # ─── Engine detection ─────────────────────────────────────────────────────────
 
 # Explicit override wins; otherwise auto-detect.
@@ -47,6 +53,12 @@ else
   _BUILD_CMD     = docker build
 endif
 
+# When PREBUILT=1, layer the pre-built image overrides on top.
+ifeq ($(PREBUILT),1)
+  _COMPOSE_FILES += -f docker-compose.prebuilt.yml
+  export IMAGE_TAG
+endif
+
 COMPOSE        = $(_ENGINE_PREFIX) $(_ENGINE) $(_COMPOSE_FILES) --env-file $(ENV_FILE)
 COMPOSE_TUNNEL = $(COMPOSE) -f docker-compose.tunnel.yml
 
@@ -57,7 +69,7 @@ COMPOSE_TUNNEL = $(COMPOSE) -f docker-compose.tunnel.yml
 .PHONY: help
 help:
 	@echo ""
-	@echo "  Hydro Platform  (engine: $(if $(filter 1,$(PODMAN)),podman,docker))"
+	@echo "  Hydro Platform  (engine: $(if $(filter 1,$(PODMAN)),podman,docker), prebuilt: $(if $(filter 1,$(PREBUILT)),yes,no))"
 	@echo ""
 	@echo "  First time:"
 	@echo "    make setup            Clone repos, create .env, link configs"
@@ -75,6 +87,11 @@ help:
 	@echo "    make logs             Follow all logs"
 	@echo "    make logs SVC=api     Follow a specific service"
 	@echo "    make check            Health check all endpoints"
+	@echo ""
+	@echo "  Pre-built images (skip local compilation):"
+	@echo "    make PREBUILT=1 up               Pull from GHCR and start"
+	@echo "    make PREBUILT=1 pull              Pull latest pre-built images"
+	@echo "    make PREBUILT=1 IMAGE_TAG=v1.0 up Use a specific image tag"
 	@echo ""
 	@echo "  Podman:"
 	@echo "    make PODMAN=1 up      Force podman (auto-detected if docker absent)"
@@ -215,6 +232,10 @@ else
 endif
 
 .PHONY: build
+ifeq ($(PREBUILT),1)
+build:
+	@echo "PREBUILT=1 — skipping local build. Use 'make pull' to fetch pre-built images."
+else
 build:
 	@echo "Building TSM services..."
 	$(COMPOSE) build init keycloak frost cron-scheduler \
@@ -224,23 +245,46 @@ build:
 	@echo "Building water-dp services..."
 	$(_WATER_BUILD_COMPOSE) build api worker frontend
 	$(_WATER_BUILD_COMPOSE) --profile seed build water-dp-seed
+endif
 
 .PHONY: build-api
+ifeq ($(PREBUILT),1)
+build-api:
+	@echo "PREBUILT=1 — skipping local build. Use 'make pull' to fetch pre-built images."
+else
 build-api:
 	$(_WATER_BUILD_COMPOSE) build api worker
 	$(_WATER_BUILD_COMPOSE) --profile seed build water-dp-seed
+endif
 
 .PHONY: build-frontend
+ifeq ($(PREBUILT),1)
+build-frontend:
+	@echo "PREBUILT=1 — skipping local build. Use 'make pull' to fetch pre-built images."
+else
 build-frontend:
 	$(_WATER_BUILD_COMPOSE) build frontend
+endif
 
 .PHONY: redeploy-api
+ifeq ($(PREBUILT),1)
+redeploy-api:
+	$(COMPOSE) pull api worker
+	$(COMPOSE) up -d --no-deps api worker
+else
 redeploy-api: build-api
 	$(COMPOSE) up -d --no-deps api worker
+endif
 
 .PHONY: redeploy-frontend
+ifeq ($(PREBUILT),1)
+redeploy-frontend:
+	$(COMPOSE) pull frontend
+	$(COMPOSE) up -d --no-deps frontend
+else
 redeploy-frontend: build-frontend
 	$(COMPOSE) up -d --no-deps frontend
+endif
 
 # ─── Maintenance ──────────────────────────────────────────────────────────────
 

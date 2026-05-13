@@ -139,6 +139,10 @@ create_symlinks() {
 # It must be built before `docker compose up`.
 
 build_keycloak() {
+    if [ "${PREBUILT:-0}" = "1" ]; then
+        ok "PREBUILT=1 — skipping tsm-keycloak:local build (pre-built image will be pulled)"
+        return
+    fi
     if $_SETUP_ENGINE image inspect tsm-keycloak:local >/dev/null 2>&1; then
         ok "tsm-keycloak:local image already exists"
     else
