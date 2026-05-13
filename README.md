@@ -78,15 +78,15 @@ Access points after `make up` (with `PUBLIC_HOSTNAME=localhost` and `PUBLIC_PORT
 
 ## Pre-built images (no local compilation)
 
-Instead of cloning the source repos and building Docker images locally, you can
-pull pre-built images from GitHub Container Registry. This is ideal for
-quick deployments or machines without build toolchains.
+Skip local image compilation by pulling pre-built images from GitHub Container
+Registry. The source repos are still required (for compose files and
+configuration), but no build toolchain is needed.
 
 ```bash
 git clone <this-repo> hydro-deploy
 cd hydro-deploy
 
-make setup              # still needed for .env, symlinks, etc.
+PREBUILT=1 make setup   # clones repos, creates .env, skips keycloak build
 make secrets
 
 # Pull images and start — no `make build` required

@@ -59,6 +59,8 @@ ifeq ($(PREBUILT),1)
   export IMAGE_TAG
 endif
 
+export PREBUILT
+
 COMPOSE        = $(_ENGINE_PREFIX) $(_ENGINE) $(_COMPOSE_FILES) --env-file $(ENV_FILE)
 COMPOSE_TUNNEL = $(COMPOSE) -f docker-compose.tunnel.yml
 
@@ -218,8 +220,13 @@ seed:
 # ─── Build & Images ───────────────────────────────────────────────────────────
 
 .PHONY: pull
+ifeq ($(PREBUILT),1)
+pull:
+	$(COMPOSE) pull
+else
 pull:
 	$(COMPOSE) pull --ignore-buildable
+endif
 
 # Build water-dp compose definition (standalone, for building only).
 # We cd into WATER_DIR so relative paths in the compose file resolve correctly.
